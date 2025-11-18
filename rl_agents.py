@@ -118,7 +118,7 @@ class BaseAgent:
     def load_model(self, filepath):
         """Load agent model"""
         if os.path.exists(filepath):
-            checkpoint = torch.load(filepath, map_location='cpu')
+            checkpoint = torch.load(filepath, map_location='cpu', weights_only=False)
             self.policy_net.load_state_dict(checkpoint['policy_state_dict'])
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             self.epsilon = checkpoint.get('epsilon', self.epsilon_min)
