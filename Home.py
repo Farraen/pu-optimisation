@@ -1309,12 +1309,22 @@ st_title('PU Decision Engine Playground')
 st.caption("Optimized for dark mode. To change the theme, access the settings panel by clicking the three dots in the top-right corner of the app.")
 
 with st.expander('Introduction',expanded=True):
-    st_text('A virtual environment to demonstrate the ability of Hierarchical Multi-Agent Reinforcement Learning to solve PU selection problem. The system consists of a Manager agent that oversees rules and PU usage constraints, and two co-worker agents: Performance (minimizes degradation) and Reliability (ensures SOH > 0). Allows race engineer to quickly restrategise live with new race data and historical decisions. Adapted from Farraen\'s 2018 Matlab GA PU script and converted into Python environment with RL optimization. The UI was developed using 2018 season track data.')
-    
+
     # Display both images side by side
-    col1, col2 = st.columns(2)
+    col1, col2 = st.columns([1,0.7])
     
     with col1:
+
+        st_text('A virtual environment to demonstrate the ability of Hierarchical Multi-Agent Reinforcement Learning to solve PU selection problem. The system consists of a Manager agent that oversees rules and PU usage constraints, and two co-worker agents: Performance (minimizes degradation) and Reliability (ensures PU alive until end of the season). Allows race engineer to quickly restrategise live with new race data and historical decisions.')
+    
+    with col2:
+        st_text('The system consists of a Manager agent that oversees rules and PU usage constraints, and two co-worker agents: Performance (minimizes degradation) and Reliability (ensures SOH > 0). Allows race engineer to quickly restrategise live with new race data and historical decisions. Adapted from Farraen\'s 2018 Matlab GA PU script and converted into Python environment with RL optimization. The UI was developed using 2018 season track data.')
+
+    # Display both images side by side
+    col1, col2 = st.columns([1,0.7])
+    
+    with col1:
+
         image_intro = read_image("images/Page1_intro.png")
         st.image(image_intro, use_column_width=True, caption="PU Selection Overview")
     
@@ -1328,6 +1338,8 @@ with st.expander('Damage model',expanded=False):
     st.image(image,width=700,use_column_width=True)
 
 with st.expander('AI race engineer - Chat with RL agents',expanded=True):
+
+    st_text("Still work in progress to allow discussion with the RL agents. For now, you can only chat with the Chief engineer.")
     # User only chats with Chief engineer
     st.markdown("### 👔 Chief Engineer")
     st.caption("Oversees rules and PU usage constraints. Automatically consults with Performance and Reliability agents when needed.")
@@ -1862,7 +1874,7 @@ with st.expander('Reinforcement Learning settings',expanded=True):
     with col2:
         st.session_state.pu_iter_placeholder = st.empty()
 
-with st.expander('RL Agent Settings Status (Read-Only)',expanded=True):
+with st.expander('RL Agent Settings Status (Read-Only)',expanded=False):
     st.caption("Current RL agent settings. These can only be modified through chat with the Chief Engineer. Settings update automatically when changed via chat.")
     
     # Manager (Chief Engineer) Settings
