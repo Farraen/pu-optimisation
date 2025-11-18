@@ -7,7 +7,6 @@ import time
 import streamlit as st
 import pandas as pd
 import numpy as np
-import pygad
 import plotly.express as px
 import plotly.graph_objects as go
 from scipy.interpolate import interp1d
@@ -19,6 +18,9 @@ import json
 import re
 import ast
 import statistics
+from rl_environment import PUSelectionEnv
+from rl_agents import HierarchicalRLCoordinator
+import os
 
 
 # ---------  System cache  -----------------
@@ -38,11 +40,17 @@ if 'df_1' not in st.session_state:
 if 'pu_bias' not in st.session_state:
     st.session_state.pu_bias = 2
 
-if 'gen_number' not in st.session_state:
-    st.session_state.gen_number = []
+if 'num_episodes' not in st.session_state:
+    st.session_state.num_episodes = 50
 
 if "pu_iter" not in st.session_state:
     st.session_state.pu_iter = []
+
+if 'rl_coordinator' not in st.session_state:
+    st.session_state.rl_coordinator = None
+
+if 'bias_changed' not in st.session_state:
+    st.session_state.bias_changed = False
 
 
 # --------  For page layout  ---------------
@@ -191,18 +199,22 @@ def plot_results():
     # Load last result
     if isinstance(st.session_state.pu_results, dict) and len(st.session_state.pu_results) > 0:
 
-        key = list(st.session_state.pu_results)[-1]
+        # Get all keys and sort them
+        all_keys = sorted([k for k in st.session_state.pu_results.keys() if isinstance(k, (int, float))])
+        
+        if len(all_keys) == 0:
+            return
+        
+        key = all_keys[-1]
         df_best = st.session_state.pu_results[key]
-
 
         fig = go.Figure()
 
-        for i in range(1,key):
-            if i == key-1:
-                flag = True
-            else:
-                flag = False
-
+        # Plot previous solutions (only if they exist)
+        previous_keys = [k for k in all_keys if k < key]
+        for idx, i in enumerate(previous_keys):
+            if i in st.session_state.pu_results:
+                flag = (idx == len(previous_keys) - 1)  # Show legend only for last previous solution
             dts = st.session_state.pu_results[i]
             fig.add_trace(go.Scatter(
                 y=dts['RUL'],
@@ -214,6 +226,7 @@ def plot_results():
                 color='grey')
             ))
 
+        # Plot best solution
         fig.add_trace(go.Scatter(
             y=df_best['RUL'],
             mode='lines',
@@ -238,7 +251,10 @@ def plot_results():
 
 
         fig2 = go.Figure()
-        for i in range(1,key+1):
+        # Plot all available results
+        for idx, i in enumerate(all_keys):
+            if i not in st.session_state.pu_results:
+                continue
             
             width = 1
             cc = 'grey'
@@ -250,7 +266,7 @@ def plot_results():
                 width = 4
                 nameLegend='Best PU Allocation'
                 flagRange = True
-            elif i == key-1:
+            elif idx == len(all_keys) - 2:  # Second to last
                 flag = True
             else:
                 flag = False
@@ -259,26 +275,33 @@ def plot_results():
 
             # Get list of PUs
             pu_list = dts["PU Projection"].unique().tolist()
+            pu_list = [p for p in pu_list if not pd.isna(p)]
             pu_list.sort()
+
+            if len(pu_list) == 0:
+                continue
 
             # Find all max reduced for each PU
             maxpowerreduced = []
             for k in pu_list:
-                mx = np.max(dts.loc[np.where(dts["PU Projection"] == k)[0],'PowerReduced'].to_numpy())
+                pu_indices = np.where(dts["PU Projection"] == k)[0]
+                if len(pu_indices) > 0:
+                    mx = np.max(dts.loc[pu_indices,'PowerReduced'].to_numpy())
                 maxpowerreduced.append(mx)
 
-            fig2.add_trace(go.Scatter(
-                    x=pu_list,
-                    y=maxpowerreduced,
-                    mode='lines',
-                    name=nameLegend,
-                    showlegend = flag,
-                    line=dict(
-                    width=width,
-                    color=cc)
-                ))
+            if len(maxpowerreduced) > 0:
+                fig2.add_trace(go.Scatter(
+                        x=pu_list,
+                        y=maxpowerreduced,
+                        mode='lines',
+                        name=nameLegend,
+                        showlegend = flag,
+                        line=dict(
+                        width=width,
+                        color=cc)
+                    ))
             
-            if flagRange:
+            if flagRange and len(maxpowerreduced) > 0:
                 ymax = max(maxpowerreduced)
                 ymin = min(maxpowerreduced)
 
@@ -299,19 +322,20 @@ def plot_results():
         #st_text('Plot shows the power loss due to degradation for all power units')
 
 def plot_iter():
-    dta = pd.DataFrame(st.session_state.pu_fitness_trace,columns=["value"])
+    if len(st.session_state.pu_fitness_trace) > 0:
+        dta = pd.DataFrame(st.session_state.pu_fitness_trace,columns=["value"])
 
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        y=dta['value'],
-        mode='markers+lines',
-    ))
-    fig.update_layout(margin=dict(l=20, r=20, t=20, b=20))
-    fig.update_yaxes(title_text='Fitness Value')
-    fig.update_xaxes(title_text='Generation')
-    fig.update_layout(height=300)
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            y=dta['value'],
+            mode='markers+lines',
+        ))
+        fig.update_layout(margin=dict(l=20, r=20, t=20, b=20))
+        fig.update_yaxes(title_text='Episode Reward')
+        fig.update_xaxes(title_text='Episode')
+        fig.update_layout(height=300)
 
-    st.session_state.pu_iter_placeholder.plotly_chart(fig,use_container_width=True,height=300)
+        st.session_state.pu_iter_placeholder.plotly_chart(fig,use_container_width=True,height=300)
 
 def change_bias():
     pu_bias = st.session_state.slider
@@ -321,6 +345,9 @@ def change_bias():
         st.session_state.pu_bias = 10
     else:
         st.session_state.pu_bias = int(pu_bias)
+    
+    # Set flag to trigger re-optimization on next run
+    st.session_state.bias_changed = True
 
 # --------  For optimisation  -------------
 
@@ -334,12 +361,13 @@ def make_full_solution(solution):
         actual = dff["PU Actual"].to_numpy()
         solutionFull[~tracks_left_idx] = actual[~tracks_left_idx]
         
-        # For remaining races, use the solution from GA
+        # For remaining races, use the solution from RL
         remaining_indices = np.where(tracks_left_idx)[0]
         for i, idx in enumerate(remaining_indices):
-            solutionFull[idx] = solution[i]
+            if i < len(solution):
+                solutionFull[idx] = solution[i]
     else:
-        # No actual values, use the GA solution
+        # No actual values, use the RL solution
         solutionFull = solution
     
     # Then, override with Fresh PU values (user-specified PU assignments)
@@ -351,23 +379,158 @@ def make_full_solution(solution):
     
     return solutionFull
 
-def fitness_func(ga_instance, solution, solution_idx):
+def progress_callback(episode, step, reward, progress_bar=None):
+    """Callback for RL training progress"""
+    st.session_state.pu_iter = episode + 1
+    progress = (episode + 1) / st.session_state.num_episodes
     
-    solution = make_full_solution(solution)
+    if progress_bar:
+        progress_bar.progress(progress, text=f'Training RL agents... Episode {episode+1}/{st.session_state.num_episodes}')
+    
+    # Update fitness trace
+    if len(st.session_state.pu_fitness_trace) <= episode:
+        st.session_state.pu_fitness_trace.append(reward)
+    else:
+        st.session_state.pu_fitness_trace[episode] = reward
 
-    fitness_value, PowerLoss, PowerLeft, RUL, PowerReduced = DamageModel(solution)
-
-    return fitness_value
-
-def on_start(ga_instance):
-    st.session_state.pu_fitness_trace = []
-    st.session_state.pu_results = {data: [] for data in range(1,ga_instance.num_generations)}
+def quick_optimisation(progress_bar=None):
+    """Quick optimization using pre-trained models - no retraining"""
+    
+    # Check if pre-trained models exist
+    models_exist = os.path.exists("models/rl_agents/manager.pth")
+    
+    if not models_exist:
+        st.warning("⚠ No pre-trained models found. Please click 'Pre-train Models' button first for best results.")
+        st.info("Running quick training (5 episodes) as fallback...")
+    
+    # Only optimise track with no actual PU results
+    df_temp = st.session_state.df_1.copy()
+    tracks_to_optimize_idx = df_temp[df_temp["PU Actual"].isna()].index.tolist()
+    
+    if len(tracks_to_optimize_idx) == 0:
+        st.error("No races to optimize")
+        return
+    
+    # Create RL environment
+    env = PUSelectionEnv(
+        track_data=df_temp,
+        damage_model_func=DamageModel,
+        max_pu_usage=3
+    )
+    
+    # Create hierarchical RL coordinator with pre-trained models
+    coordinator = HierarchicalRLCoordinator(
+        env=env,
+        damage_model_func=DamageModel,
+        num_episodes=0,  # No training needed if models exist
+        use_pretrained=True
+    )
+    
+    # Adjust reward weights based on current bias
+    pu_bias = st.session_state.get('pu_bias', 2)
+    if pu_bias == 1:  # High Performance
+        coordinator.manager.update_reward_weights(
+            performance_weight=0.6, reliability_weight=0.1
+        )
+    elif pu_bias == 10:  # Longer RUL
+        coordinator.manager.update_reward_weights(
+            performance_weight=0.1, reliability_weight=0.6
+        )
+    else:
+        # Scale weights based on bias (1-10 scale)
+        perf_weight = 0.1 + (10 - pu_bias) * 0.05
+        rel_weight = 0.1 + (pu_bias - 1) * 0.05
+        coordinator.manager.update_reward_weights(
+            performance_weight=perf_weight, reliability_weight=rel_weight
+        )
+    
+    st.session_state.rl_coordinator = coordinator
+    
+    # Use quick inference mode
+    try:
+        best_solution = coordinator.quick_inference(progress_bar=progress_bar)
+        solution = make_full_solution(best_solution)
         
-def on_generation(ga_instance):
+        # Calculate final metrics
+        Fitness, PowerLoss, PowerLeft, RUL, PowerReduced = DamageModel(solution)
+        
+        st.session_state.df_1["PU Projection"] = solution
+        st.session_state.df_1["PowerLeft"] = PowerLeft["PowerLeft"]
+        st.session_state.df_1["PowerReduced"] = PowerReduced["PowerReduced"]
+        st.session_state.df_1["RUL"] = RUL["RUL"]
+        dts = st.session_state.df_1.copy()
+        
+        # Store final result
+        st.session_state.pu_results[1] = dts  # Use simple key for quick results
+        
+        # Latest results
+        plot_results()
+        
+    except Exception as e:
+        st.error(f"Error during RL inference: {e}")
+        import traceback
+        st.error(traceback.format_exc())
+        return
 
-    solution, solution_fitness, solution_idx = ga_instance.best_solution()
-    solution = make_full_solution(solution)
-
+def optimisation_sequence(progress_bar=None, force_training=False):
+    """Run hierarchical RL optimization - with optional training"""
+    
+    # Only optimise track with no actual PU results
+    df_temp = st.session_state.df_1.copy()
+    tracks_to_optimize_idx = df_temp[df_temp["PU Actual"].isna()].index.tolist()
+    
+    if len(tracks_to_optimize_idx) == 0:
+        st.error("No races to optimize")
+        return
+    
+    # Check if pre-trained models exist and user wants quick mode
+    models_exist = os.path.exists("models/rl_agents/manager.pth")
+    
+    if models_exist and not force_training:
+        # Use quick inference mode
+        quick_optimisation(progress_bar=progress_bar)
+        return
+    
+    # Otherwise, do training
+    st.session_state.pu_iter = 0
+    st.session_state.pu_fitness_trace = []
+    st.session_state.pu_results = {}
+    
+    # Create RL environment
+    env = PUSelectionEnv(
+        track_data=df_temp,
+        damage_model_func=DamageModel,
+        max_pu_usage=3
+    )
+    
+    # Create hierarchical RL coordinator
+    coordinator = HierarchicalRLCoordinator(
+        env=env,
+        damage_model_func=DamageModel,
+        num_episodes=st.session_state.num_episodes,
+        use_pretrained=models_exist  # Use pre-trained if available
+    )
+    
+    st.session_state.rl_coordinator = coordinator
+    
+    # Train the agents (or fine-tune)
+    try:
+        # Create a wrapper callback that includes progress bar
+        def wrapped_callback(episode, step, reward):
+            progress_callback(episode, step, reward, progress_bar)
+        
+        coordinator.train(progress_callback=wrapped_callback, fast_mode=True)
+    except Exception as e:
+        st.error(f"Error during RL training: {e}")
+        import traceback
+        st.error(traceback.format_exc())
+        return
+    
+    # Get best solution
+    best_solution = coordinator.get_best_solution()
+    solution = make_full_solution(best_solution)
+    
+    # Calculate final metrics
     Fitness, PowerLoss, PowerLeft, RUL, PowerReduced = DamageModel(solution)
 
     st.session_state.df_1["PU Projection"] = solution
@@ -376,82 +539,21 @@ def on_generation(ga_instance):
     st.session_state.df_1["RUL"] = RUL["RUL"]
     dts = st.session_state.df_1.copy()
 
-    index = ga_instance.generations_completed
-    st.session_state.pu_results[index] = dts
+    # Store final result
+    st.session_state.pu_results[st.session_state.num_episodes] = dts
 
-    st.session_state.pu_fitness_trace.append(solution_fitness)
-    dta = pd.DataFrame(st.session_state.pu_fitness_trace,columns=["value"])
-
-    st.session_state.pu_iter = st.session_state.pu_iter + 1
-    my_bar.progress(st.session_state.pu_iter/st.session_state.gen_number,text='Restrategise PU allocation. Please wait...')
-
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        y=dta['value'],
-        mode='markers+lines',
-    ))
-    fig.update_yaxes(title_text='Fitness Value')
-    fig.update_xaxes(title_text='Generation')
-    fig.update_layout(margin=dict(l=20, r=20, t=20, b=20))
-    st.session_state.pu_iter_placeholder.plotly_chart(fig,use_container_width=True)
-
-def optimisation_sequence():
-
-    fitness_function = fitness_func
-
-    # Only optimise track with no actual PU results
-    df_temp = st.session_state.df_1.copy()
-    tracks_to_optimize_idx = df_temp[df_temp["PU Actual"].isna()].index.tolist()
-    num_genes = len(tracks_to_optimize_idx)
-
-    num_parents_mating = 8
-    sol_per_pop = 20
-    st.session_state.pu_iter = 0
-
-    # Build gene_space - different available PUs for each race
-    gene_space = []
-    
-    for race_idx in tracks_to_optimize_idx:
-        # Start with all PUs
-        pu_available_for_race = [1, 2, 3]
-        
-        # Remove PUs that failed before this race
-        if race_idx > 0:
-            PU_failed = df_temp.loc[:race_idx-1, "PU Failures"].dropna().unique().tolist()
-            for pu in PU_failed:
-                if int(pu) in pu_available_for_race:
-                    pu_available_for_race.remove(int(pu))
-        
-        # Remove PUs that are assigned to future races (Fresh PU constraint)
-        if "Fresh PU" in df_temp.columns:
-            # Get all races after this one
-            future_races = df_temp.loc[race_idx+1:, "Fresh PU"].dropna().unique().tolist()
-            for pu in future_races:
-                if int(pu) in pu_available_for_race:
-                    pu_available_for_race.remove(int(pu))
-        
-        # If no PUs available for this race, something is wrong
-        if not pu_available_for_race:
-            pu_available_for_race = [1, 2, 3]  # Fallback to all PUs
-        
-        gene_space.append(pu_available_for_race)
-                
-    if not gene_space or all(len(space) == 0 for space in gene_space):
-        st.error("No PU left to allocate")
-    else:
-        ga_instance = pygad.GA(num_generations=st.session_state.gen_number,
-                        num_parents_mating=num_parents_mating,
-                        fitness_func=fitness_function,
-                        sol_per_pop=sol_per_pop,
-                        num_genes=num_genes,
-                        gene_space=gene_space,
-                        gene_type=int,
-                        on_start=on_start,
-                        on_generation=on_generation,
-                        mutation_type='random')
-        
-        ga_instance.run()
+    # Update plot with final results
+    if len(st.session_state.pu_fitness_trace) > 0:
+        dta = pd.DataFrame(st.session_state.pu_fitness_trace,columns=["value"])
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            y=dta['value'],
+            mode='markers+lines',
+        ))
+        fig.update_yaxes(title_text='Episode Reward')
+        fig.update_xaxes(title_text='Episode')
+        fig.update_layout(margin=dict(l=20, r=20, t=20, b=20))
+        st.session_state.pu_iter_placeholder.plotly_chart(fig,use_container_width=True)
 
         # Latest results
         plot_results()
@@ -479,19 +581,22 @@ def reoptimise():
 
     st.session_state.df_1 = df
 
+    # Get progress bar from session state if available
+    progress_bar = st.session_state.get('progress_bar', None)
+
     if "PU Actual" in mode_requested:
         if flag:
-            optimisation_sequence()
+            quick_optimisation(progress_bar=progress_bar)  # Use quick mode for manual changes
             status_placeholder.success('PU allocation is successful', icon="✅")
             time.sleep(0.5)
 
     if "PU Failures" in mode_requested:
-        optimisation_sequence()
+        quick_optimisation(progress_bar=progress_bar)  # Use quick mode for manual changes
         status_placeholder.success('PU allocation is successful', icon="✅")
         time.sleep(0.5)
     
     if "Fresh PU" in mode_requested:
-        optimisation_sequence()
+        quick_optimisation(progress_bar=progress_bar)  # Use quick mode for manual changes
         status_placeholder.success('PU allocation is successful', icon="✅")
         time.sleep(0.5)
 
@@ -566,7 +671,7 @@ st_title('PU Decision Engine Playground')
 st.caption("Optimized for dark mode. To change the theme, access the settings panel by clicking the three dots in the top-right corner of the app.")
 
 with st.expander('Introduction',expanded=True):
-    st_text('A virtual environment to demonstrate the ability of Genetic Algorithm (an evolutionary algorithm) to solve PU selection problem. Allows race engineer to quickly restrategise live with new race data and historical decisions. Adapted from Farraen\'s 2018 Matlab GA PU script and converted into Python environment. Results may vary due to to the GA library behaviour. The UI was developed using 2018 season track data.')
+    st_text('A virtual environment to demonstrate the ability of Hierarchical Multi-Agent Reinforcement Learning to solve PU selection problem. The system consists of a Manager agent that oversees rules and PU usage constraints, and two co-worker agents: Performance (minimizes degradation) and Reliability (ensures SOH > 0). Allows race engineer to quickly restrategise live with new race data and historical decisions. Adapted from Farraen\'s 2018 Matlab GA PU script and converted into Python environment with RL optimization. The UI was developed using 2018 season track data.')
     image = read_image("images/Page1_intro.png")
     st.image(image,width=700,use_column_width=True)
 
@@ -581,15 +686,39 @@ with st.expander('PU selection optimisation',expanded=True):
     st.write('PU allocation strategy table (Auto-update)')
     st.markdown(
     """
-    - :green[Initialise button]: Press to initialise the PU selection at start of the season. Use the GA settings panel to change the decision prioritisation to either performance or durability.
+    - :green[Initialise button]: Press to initialise the PU selection using pre-trained RL models. Fills in PU Projection column instantly. For best results, pre-train models first using the button in RL settings.
     - :orange[Fresh PU column]: Assign a specific PU (1, 2, or 3) to a race. The optimizer will ensure that PU is NOT used in any previous races. Use this to force fresh PUs at power tracks.
-    - :blue[Actual column]: Use the column with actual selection for completed races and GA will decide the best allocation for the next races. If there is no change, then GA will not trigger.
+    - :blue[Actual column]: Use the column with actual selection for completed races and RL will decide the best allocation for the next races. If there is no change, then RL will not trigger.
     - :red[Failure column]: Use the Failure column to exclude failed PU (fill in using PU index 1,2,3,..)
     """
     )
 
-    start_button = st.button('Initialise')
-    my_bar = st.progress(0)
+    # Layout: Initialise button on left, bias slider on right
+    col_init, col_bias = st.columns([1, 2], gap="medium")
+    
+    with col_init:
+        start_button = st.button('Initialise', use_container_width=True)
+        my_bar = st.progress(0)
+        st.session_state.progress_bar = my_bar
+    
+    with col_bias:
+        bias_value = st.select_slider(
+            'Select bias:',
+            options=['High Performance','2','3','4','5','6','7','8','9','Longer RUL'],
+            value=('2'),
+            on_change=change_bias,
+            key='slider')
+        
+        # Show current bias effect
+        if bias_value == 'High Performance':
+            st.caption("⚡ Prioritizing Performance (minimize degradation)")
+        elif bias_value == 'Longer RUL':
+            st.caption("🛡️ Prioritizing Reliability (ensure SOH > 0)")
+        else:
+            bias_num = int(bias_value)
+            perf_pct = int((10 - bias_num) * 10)
+            rel_pct = int((bias_num - 1) * 10)
+            st.caption(f"⚖️ Balanced: {perf_pct}% Performance, {rel_pct}% Reliability")
 
     # Highligh rows depending on type (actual or projection)
     df_track_styled = st.session_state.df_1.copy()
@@ -613,20 +742,59 @@ with st.expander('Optimisation results',expanded=True):
         st.session_state.PUCompare_placeholder = st.empty()
 
 
-with st.expander('Genetic algorithm settings',expanded=True):
+with st.expander('Reinforcement Learning settings',expanded=True):
 
     col1, col2 = st.columns([0.8,1],gap='Small')
 
     with col1:
-
-        st.select_slider(
-            'Select bias:',
-            options=['High Performance','2','3','4','5','6','7','8','9','Longer RUL'],
-            value=('2'),
-            on_change=change_bias,
-            key='slider')    
-           
-        st.session_state.gen_number = st.number_input("Number of generation", value=20, placeholder="Type a number...")
+        st.session_state.num_episodes = st.number_input("Number of episodes (for training)", value=20, min_value=5, max_value=100, placeholder="Type a number...")
+        
+        # Check if pre-trained models exist
+        models_exist = os.path.exists("models/rl_agents/manager.pth")
+        if models_exist:
+            st.success("✓ Pre-trained models available - using quick inference mode")
+            
+            # Retrain button
+            if st.button("🔄 Retrain Models", help="Retrain models on diverse scenarios with current settings", type="secondary"):
+                with st.spinner("Retraining RL agents on diverse scenarios... This may take a few minutes."):
+                    from pre_train_rl import pre_train_agents
+                    try:
+                        pre_train_agents(
+                            track_data=st.session_state.df_1.copy(),
+                            damage_model_func=DamageModel,
+                            num_scenarios=10,  # Reduced for speed
+                            episodes_per_scenario=8,  # Reduced for speed
+                            retrain=True  # Load existing models and continue training
+                        )
+                        st.success("Retraining complete! Models updated.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Retraining error: {e}")
+                        import traceback
+                        st.error(traceback.format_exc())
+        else:
+            st.warning("⚠ No pre-trained models - will train on first run")
+            if st.button("Pre-train Models (Recommended)", help="Train models on diverse scenarios for better generalization"):
+                with st.spinner("Pre-training RL agents on diverse scenarios... This may take a few minutes."):
+                    from pre_train_rl import pre_train_agents
+                    try:
+                        pre_train_agents(
+                            track_data=st.session_state.df_1.copy(),
+                            damage_model_func=DamageModel,
+                            num_scenarios=10,  # Reduced for speed
+                            episodes_per_scenario=8  # Reduced for speed
+                        )
+                        st.success("Pre-training complete! Models saved.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Pre-training error: {e}")
+                        import traceback
+                        st.error(traceback.format_exc())
+        
+        st.caption("Hierarchical RL System:")
+        st.caption("• Manager: Rules & PU usage constraints")
+        st.caption("• Performance Agent: Minimizes degradation")
+        st.caption("• Reliability Agent: Ensures SOH > 0")
 
     with col2:
         st.session_state.pu_iter_placeholder = st.empty()
@@ -642,8 +810,20 @@ st.write('Copyright © 2024 Farraen. All rights reserved.')
 plot_results()
 plot_iter()
 
+# Check if bias changed and trigger re-optimization
+if st.session_state.get('bias_changed', False) and st.session_state.get('rl_coordinator') is not None:
+    if isinstance(st.session_state.df_1, pd.DataFrame) and len(st.session_state.df_1) > 0:
+        df_temp = st.session_state.df_1.copy()
+        tracks_to_optimize_idx = df_temp[df_temp["PU Actual"].isna()].index.tolist()
+        if len(tracks_to_optimize_idx) > 0:
+            # Re-optimize with new bias
+            quick_optimisation(progress_bar=my_bar)
+            status_placeholder.success('PU allocation updated with new bias', icon="✅")
+    st.session_state.bias_changed = False
+
 if start_button:
-    optimisation_sequence()
+    # Always use quick optimization with pre-trained models
+    quick_optimisation(progress_bar=my_bar)
     status_placeholder.success('PU allocation is successful', icon="✅")
     time.sleep(1)
     st.rerun()
