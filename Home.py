@@ -1310,8 +1310,17 @@ st.caption("Optimized for dark mode. To change the theme, access the settings pa
 
 with st.expander('Introduction',expanded=True):
     st_text('A virtual environment to demonstrate the ability of Hierarchical Multi-Agent Reinforcement Learning to solve PU selection problem. The system consists of a Manager agent that oversees rules and PU usage constraints, and two co-worker agents: Performance (minimizes degradation) and Reliability (ensures SOH > 0). Allows race engineer to quickly restrategise live with new race data and historical decisions. Adapted from Farraen\'s 2018 Matlab GA PU script and converted into Python environment with RL optimization. The UI was developed using 2018 season track data.')
-    image = read_image("images/Page1_intro.png")
-    st.image(image,width=700,use_column_width=True)
+    
+    # Display both images side by side
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        image_intro = read_image("images/Page1_intro.png")
+        st.image(image_intro, use_column_width=True, caption="PU Selection Overview")
+    
+    with col2:
+        image_rl = read_image("images/rl.png")
+        st.image(image_rl, use_column_width=True, caption="Reinforcement Learning System")
 
 with st.expander('Damage model',expanded=False):
     st_text('The optimiser uses an artificial damage model made solely for demonstration purposes. The data does not represent true PU values.')
