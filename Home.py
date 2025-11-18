@@ -1314,8 +1314,8 @@ with st.expander('Introduction',expanded=True):
     col1, col2 = st.columns([1,0.7])
     
     with col1:
+        st_text('A virtual environment to demonstrate the ability of Hierarchical Multi-Agent Reinforcement Learningto solve PU selection problem. Allows race engineer to quickly restrategise live with new race data and historical decisions. Adapted from Farraen\'s 2018 Matlab GA PU script and converted into Python environment. Results may vary due to to the GA library behaviour. The UI was developed using 2018 season track data.')
 
-        st_text('A virtual environment to demonstrate the ability of Hierarchical Multi-Agent Reinforcement Learning to solve PU selection problem. The system consists of a Manager agent that oversees rules and PU usage constraints, and two co-worker agents: Performance (minimizes degradation) and Reliability (ensures PU alive until end of the season). Allows race engineer to quickly restrategise live with new race data and historical decisions.')
     
     with col2:
         st_text('The system consists of a Manager agent that oversees rules and PU usage constraints, and two co-worker agents: Performance (minimizes degradation) and Reliability (ensures SOH > 0). Allows race engineer to quickly restrategise live with new race data and historical decisions. Adapted from Farraen\'s 2018 Matlab GA PU script and converted into Python environment with RL optimization. The UI was developed using 2018 season track data.')
