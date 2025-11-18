@@ -8,11 +8,10 @@ __pycache__/
 *.egg-info
 dist/
 build/
-models/
-*.pth
-*.pt
 .DS_Store
 .env
 venv/
 env/
 .streamlit/secrets.toml
+# Allow models directory (for pre-trained RL agents)
+# models/ is commented out so pre-trained models are included
