@@ -4,6 +4,8 @@
 
 import os, sys
 import time
+import warnings
+warnings.filterwarnings('ignore', category=DeprecationWarning, message='.*use_container_width.*')
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -584,6 +586,13 @@ with st.expander('PU selection optimisation',expanded=True):
 
     # Highligh rows depending on type (actual or projection)
     df_track_styled = st.session_state.df_1.copy()
+    
+    # Convert PU columns to integers for display (handle NaN values with nullable integer type)
+    pu_columns = ["PU Projection", "PU Actual", "Fresh PU", "PU Failures"]
+    for col in pu_columns:
+        if col in df_track_styled.columns:
+            # Convert to nullable integer type (Int64) to preserve NaN values
+            df_track_styled[col] = df_track_styled[col].astype('Int64')
 
     actual_row = np.where(~df_track_styled["PU Actual"].isna())[0]
     projection_row = np.where(df_track_styled["PU Actual"].isna())[0]

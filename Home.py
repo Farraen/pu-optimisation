@@ -4,6 +4,8 @@
 
 import os, sys
 import time
+import warnings
+warnings.filterwarnings('ignore', category=DeprecationWarning, message='.*use_container_width.*')
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -196,124 +198,198 @@ def DamageModel(x):
         
 def plot_results():
 
-    # Load last result
+    # Load results
     if isinstance(st.session_state.pu_results, dict) and len(st.session_state.pu_results) > 0:
 
-        # Get all keys and sort them
-        all_keys = sorted([k for k in st.session_state.pu_results.keys() if isinstance(k, (int, float))])
-        
-        if len(all_keys) == 0:
-            return
-        
-        key = all_keys[-1]
-        df_best = st.session_state.pu_results[key]
-
         fig = go.Figure()
-
-        # Plot previous solutions (only if they exist)
-        previous_keys = [k for k in all_keys if k < key]
-        for idx, i in enumerate(previous_keys):
-            if i in st.session_state.pu_results:
-                flag = (idx == len(previous_keys) - 1)  # Show legend only for last previous solution
-            dts = st.session_state.pu_results[i]
+        fig2 = go.Figure()
+        
+        # Get all run keys (run_0, run_1, etc.) and best key
+        run_keys = sorted([k for k in st.session_state.pu_results.keys() if isinstance(k, str) and k.startswith('run_')])
+        has_best = 'best' in st.session_state.pu_results
+        
+        # Get numeric keys for backward compatibility (old format)
+        numeric_keys = sorted([k for k in st.session_state.pu_results.keys() if isinstance(k, (int, float))])
+        
+        # Plot 1: RUL over races
+        # First, plot all run results as grey lines
+        for run_key in run_keys:
+            if run_key in st.session_state.pu_results:
+                dts = st.session_state.pu_results[run_key]
+                fig.add_trace(go.Scatter(
+                    y=dts['RUL'],
+                    mode='lines',
+                    name='Other runs',
+                    showlegend=False,  # Don't show legend for individual runs
+                    opacity=0.5,
+                    line=dict(
+                        width=1,
+                        color='grey')
+                ))
+        
+        # Plot numeric keys as grey (backward compatibility)
+        for key in numeric_keys:
+            if key in st.session_state.pu_results:
+                dts = st.session_state.pu_results[key]
+                fig.add_trace(go.Scatter(
+                    y=dts['RUL'],
+                    mode='lines',
+                    name='Previous solutions',
+                    showlegend=False,
+                    opacity=0.5,
+                    line=dict(
+                        width=1,
+                        color='grey')
+                ))
+        
+        # Plot best solution last (so it appears on top)
+        if has_best:
+            df_best = st.session_state.pu_results['best']
             fig.add_trace(go.Scatter(
-                y=dts['RUL'],
+                y=df_best['RUL'],
                 mode='lines',
-                name='Previous solutions',
-                showlegend = flag,
+                name='Best PU allocation',
                 line=dict(
-                width=1,
-                color='grey')
+                    width=4,
+                    color='blue')
             ))
-
-        # Plot best solution
-        fig.add_trace(go.Scatter(
-            y=df_best['RUL'],
-            mode='lines',
-            name='Best PU allocation',
-            line=dict(
-            width=4,
-            color='blue')
-        ))
+        elif len(numeric_keys) > 0:
+            # Fallback to last numeric key if no 'best' key
+            key = numeric_keys[-1]
+            df_best = st.session_state.pu_results[key]
+            fig.add_trace(go.Scatter(
+                y=df_best['RUL'],
+                mode='lines',
+                name='Best PU allocation',
+                line=dict(
+                    width=4,
+                    color='blue')
+            ))
+        
         fig.add_hline(y=0, line_width=3, line_dash="dash", line_color="red", annotation_text="RUL threshold",annotation_position="bottom left")
-
         fig.update_yaxes(title_text='PU RUL (Remaining Useful Life)')
         fig.update_xaxes(title_text='Race List for the season',tickmode='linear')
         fig.update_layout(legend=dict(
             orientation="v",
             yanchor="auto",
             y=1,
-            xanchor="right",  # changed
+            xanchor="right",
             x=1
         ))
         fig.update_layout(height=300,margin=dict(l=20, r=20, t=20, b=20))
         st.session_state.iterCompare_placeholder.plotly_chart(fig,use_container_width=True,height=300)
 
+        # Plot 2: Power reduction per PU
+        # First, plot all run results as grey lines
+        for run_key in run_keys:
+            if run_key in st.session_state.pu_results:
+                dts = st.session_state.pu_results[run_key]
+                
+                # Get list of PUs
+                pu_list = dts["PU Projection"].unique().tolist()
+                pu_list = [p for p in pu_list if not pd.isna(p)]
+                pu_list.sort()
 
-        fig2 = go.Figure()
-        # Plot all available results
-        for idx, i in enumerate(all_keys):
-            if i not in st.session_state.pu_results:
-                continue
-            
-            width = 1
-            cc = 'grey'
-            flag = True
-            nameLegend='Previous solutions'
-            flagRange = False
-            if i == key:
-                cc = 'blue'
-                width = 4
-                nameLegend='Best PU Allocation'
-                flagRange = True
-            elif idx == len(all_keys) - 2:  # Second to last
-                flag = True
-            else:
-                flag = False
+                if len(pu_list) == 0:
+                    continue
 
-            dts = st.session_state.pu_results[i]
+                # Find all max reduced for each PU
+                maxpowerreduced = []
+                for k in pu_list:
+                    pu_indices = np.where(dts["PU Projection"] == k)[0]
+                    if len(pu_indices) > 0:
+                        mx = np.max(dts.loc[pu_indices,'PowerReduced'].to_numpy())
+                        maxpowerreduced.append(mx)
 
-            # Get list of PUs
-            pu_list = dts["PU Projection"].unique().tolist()
-            pu_list = [p for p in pu_list if not pd.isna(p)]
-            pu_list.sort()
-
-            if len(pu_list) == 0:
-                continue
-
-            # Find all max reduced for each PU
-            maxpowerreduced = []
-            for k in pu_list:
-                pu_indices = np.where(dts["PU Projection"] == k)[0]
-                if len(pu_indices) > 0:
-                    mx = np.max(dts.loc[pu_indices,'PowerReduced'].to_numpy())
-                maxpowerreduced.append(mx)
-
-            if len(maxpowerreduced) > 0:
-                fig2.add_trace(go.Scatter(
+                if len(maxpowerreduced) > 0:
+                    fig2.add_trace(go.Scatter(
                         x=pu_list,
                         y=maxpowerreduced,
                         mode='lines',
-                        name=nameLegend,
-                        showlegend = flag,
+                        name='Other runs',
+                        showlegend=False,
+                        opacity=0.5,
                         line=dict(
-                        width=width,
-                        color=cc)
+                            width=1,
+                            color='grey')
                     ))
-            
-            if flagRange and len(maxpowerreduced) > 0:
-                ymax = max(maxpowerreduced)
-                ymin = min(maxpowerreduced)
+        
+        # Plot numeric keys as grey (backward compatibility)
+        for key in numeric_keys:
+            if key in st.session_state.pu_results:
+                dts = st.session_state.pu_results[key]
+                
+                pu_list = dts["PU Projection"].unique().tolist()
+                pu_list = [p for p in pu_list if not pd.isna(p)]
+                pu_list.sort()
 
-                fig2.add_hline(y=ymax, line_width=3, line_dash="dash", line_color="red", annotation_text="Max of best solution",annotation_position="bottom left")
-                fig2.add_hline(y=ymin, line_width=3, line_dash="dash", line_color="red", annotation_text="Min of best solution",annotation_position="bottom left")
-                fig2.update_yaxes(title_text='Power Reduction End Season (kW)')
-                fig2.update_xaxes(title_text='Power Unit',tickmode='linear')
+                if len(pu_list) == 0:
+                    continue
+
+                maxpowerreduced = []
+                for k in pu_list:
+                    pu_indices = np.where(dts["PU Projection"] == k)[0]
+                    if len(pu_indices) > 0:
+                        mx = np.max(dts.loc[pu_indices,'PowerReduced'].to_numpy())
+                        maxpowerreduced.append(mx)
+
+                if len(maxpowerreduced) > 0:
+                    fig2.add_trace(go.Scatter(
+                        x=pu_list,
+                        y=maxpowerreduced,
+                        mode='lines',
+                        name='Previous solutions',
+                        showlegend=False,
+                        opacity=0.5,
+                        line=dict(
+                            width=1,
+                            color='grey')
+                    ))
+        
+        # Plot best solution last (so it appears on top)
+        if has_best:
+            df_best = st.session_state.pu_results['best']
+        elif len(numeric_keys) > 0:
+            df_best = st.session_state.pu_results[numeric_keys[-1]]
+        else:
+            df_best = None
+        
+        if df_best is not None:
+            pu_list = df_best["PU Projection"].unique().tolist()
+            pu_list = [p for p in pu_list if not pd.isna(p)]
+            pu_list.sort()
+
+            if len(pu_list) > 0:
+                maxpowerreduced = []
+                for k in pu_list:
+                    pu_indices = np.where(df_best["PU Projection"] == k)[0]
+                    if len(pu_indices) > 0:
+                        mx = np.max(df_best.loc[pu_indices,'PowerReduced'].to_numpy())
+                        maxpowerreduced.append(mx)
+
+                if len(maxpowerreduced) > 0:
+                    fig2.add_trace(go.Scatter(
+                        x=pu_list,
+                        y=maxpowerreduced,
+                        mode='lines',
+                        name='Best PU Allocation',
+                        line=dict(
+                            width=4,
+                            color='blue')
+                    ))
+                    
+                    ymax = max(maxpowerreduced)
+                    ymin = min(maxpowerreduced)
+                    fig2.add_hline(y=ymax, line_width=3, line_dash="dash", line_color="red", annotation_text="Max of best solution",annotation_position="bottom left")
+                    fig2.add_hline(y=ymin, line_width=3, line_dash="dash", line_color="red", annotation_text="Min of best solution",annotation_position="bottom left")
+        
+        fig2.update_yaxes(title_text='Power Reduction End Season (kW)')
+        fig2.update_xaxes(title_text='Power Unit',tickmode='linear')
         fig2.update_layout(legend=dict(
             orientation="v",
             yanchor="auto",
             y=1,
-            xanchor="right",  # changed
+            xanchor="right",
             x=1))
         fig2.update_layout(height=300,margin=dict(l=20, r=20, t=20, b=20))
         st.session_state.PUCompare_placeholder.plotly_chart(fig2,use_container_width=True)
@@ -394,7 +470,7 @@ def progress_callback(episode, step, reward, progress_bar=None):
         st.session_state.pu_fitness_trace[episode] = reward
 
 def quick_optimisation(progress_bar=None):
-    """Quick optimization using pre-trained models - no retraining"""
+    """Quick optimization using pre-trained models - runs 10 times and selects best"""
     
     # Check if pre-trained models exist
     models_exist = os.path.exists("models/rl_agents/manager.pth")
@@ -411,57 +487,99 @@ def quick_optimisation(progress_bar=None):
         st.error("No races to optimize")
         return
     
-    # Create RL environment
-    env = PUSelectionEnv(
-        track_data=df_temp,
-        damage_model_func=DamageModel,
-        max_pu_usage=3
-    )
+    # Run 10 iterations to get multiple solutions
+    num_runs = 10
+    all_solutions = []
     
-    # Create hierarchical RL coordinator with pre-trained models
-    coordinator = HierarchicalRLCoordinator(
-        env=env,
-        damage_model_func=DamageModel,
-        num_episodes=0,  # No training needed if models exist
-        use_pretrained=True
-    )
+    if progress_bar:
+        progress_bar.progress(0.0, text=f'Running RL optimization {num_runs} times...')
     
-    # Adjust reward weights based on current bias
-    pu_bias = st.session_state.get('pu_bias', 2)
-    if pu_bias == 1:  # High Performance
-        coordinator.manager.update_reward_weights(
-            performance_weight=0.6, reliability_weight=0.1
-        )
-    elif pu_bias == 10:  # Longer RUL
-        coordinator.manager.update_reward_weights(
-            performance_weight=0.1, reliability_weight=0.6
-        )
-    else:
-        # Scale weights based on bias (1-10 scale)
-        perf_weight = 0.1 + (10 - pu_bias) * 0.05
-        rel_weight = 0.1 + (pu_bias - 1) * 0.05
-        coordinator.manager.update_reward_weights(
-            performance_weight=perf_weight, reliability_weight=rel_weight
-        )
-    
-    st.session_state.rl_coordinator = coordinator
-    
-    # Use quick inference mode
     try:
-        best_solution = coordinator.quick_inference(progress_bar=progress_bar)
-        solution = make_full_solution(best_solution)
+        for run_idx in range(num_runs):
+            # Create RL environment (fresh copy for each run)
+            env = PUSelectionEnv(
+                track_data=df_temp.copy(),
+                damage_model_func=DamageModel,
+                max_pu_usage=3
+            )
+            
+            # Create hierarchical RL coordinator with pre-trained models
+            coordinator = HierarchicalRLCoordinator(
+                env=env,
+                damage_model_func=DamageModel,
+                num_episodes=0,  # No training needed if models exist
+                use_pretrained=True
+            )
+            
+            # Adjust reward weights based on current bias
+            pu_bias = st.session_state.get('pu_bias', 2)
+            if pu_bias == 1:  # High Performance
+                coordinator.manager.update_reward_weights(
+                    performance_weight=0.6, reliability_weight=0.1
+                )
+            elif pu_bias == 10:  # Longer RUL
+                coordinator.manager.update_reward_weights(
+                    performance_weight=0.1, reliability_weight=0.6
+                )
+            else:
+                # Scale weights based on bias (1-10 scale)
+                perf_weight = 0.1 + (10 - pu_bias) * 0.05
+                rel_weight = 0.1 + (pu_bias - 1) * 0.05
+                coordinator.manager.update_reward_weights(
+                    performance_weight=perf_weight, reliability_weight=rel_weight
+                )
+            
+            # Get solution from this run
+            solution = coordinator.get_best_solution(use_eval_mode=True)
+            full_solution = make_full_solution(solution)
+            
+            # Calculate metrics for this solution
+            Fitness, PowerLoss, PowerLeft, RUL, PowerReduced = DamageModel(full_solution)
+            
+            # Store solution and metrics
+            all_solutions.append({
+                'solution': full_solution,
+                'fitness': Fitness,
+                'PowerLoss': PowerLoss,
+                'PowerLeft': PowerLeft,
+                'RUL': RUL,
+                'PowerReduced': PowerReduced
+            })
+            
+            if progress_bar:
+                progress = (run_idx + 1) / num_runs
+                progress_bar.progress(progress, text=f'Running RL optimization {run_idx + 1}/{num_runs}...')
         
-        # Calculate final metrics
-        Fitness, PowerLoss, PowerLeft, RUL, PowerReduced = DamageModel(solution)
+        # Select best solution based on fitness (higher is better)
+        best_idx = max(range(len(all_solutions)), key=lambda i: all_solutions[i]['fitness'])
+        best_solution_data = all_solutions[best_idx]
         
-        st.session_state.df_1["PU Projection"] = solution
-        st.session_state.df_1["PowerLeft"] = PowerLeft["PowerLeft"]
-        st.session_state.df_1["PowerReduced"] = PowerReduced["PowerReduced"]
-        st.session_state.df_1["RUL"] = RUL["RUL"]
-        dts = st.session_state.df_1.copy()
+        # Update main dataframe with best solution
+        st.session_state.df_1["PU Projection"] = best_solution_data['solution']
+        st.session_state.df_1["PowerLeft"] = best_solution_data['PowerLeft']["PowerLeft"]
+        st.session_state.df_1["PowerReduced"] = best_solution_data['PowerReduced']["PowerReduced"]
+        st.session_state.df_1["RUL"] = best_solution_data['RUL']["RUL"]
         
-        # Store final result
-        st.session_state.pu_results[1] = dts  # Use simple key for quick results
+        # Store all results in session state for plotting
+        # Clear previous quick results
+        keys_to_remove = [k for k in st.session_state.pu_results.keys() if isinstance(k, str) and k.startswith('run_')]
+        for k in keys_to_remove:
+            del st.session_state.pu_results[k]
+        
+        # Store all 10 runs
+        for run_idx, sol_data in enumerate(all_solutions):
+            dts = st.session_state.df_1.copy()
+            dts["PU Projection"] = sol_data['solution']
+            dts["PowerLeft"] = sol_data['PowerLeft']["PowerLeft"]
+            dts["PowerReduced"] = sol_data['PowerReduced']["PowerReduced"]
+            dts["RUL"] = sol_data['RUL']["RUL"]
+            
+            # Store with run identifier
+            st.session_state.pu_results[f'run_{run_idx}'] = dts
+        
+        # Store best result with special key
+        dts_best = st.session_state.df_1.copy()
+        st.session_state.pu_results['best'] = dts_best
         
         # Latest results
         plot_results()
@@ -722,6 +840,13 @@ with st.expander('PU selection optimisation',expanded=True):
 
     # Highligh rows depending on type (actual or projection)
     df_track_styled = st.session_state.df_1.copy()
+    
+    # Convert PU columns to integers for display (handle NaN values with nullable integer type)
+    pu_columns = ["PU Projection", "PU Actual", "Fresh PU", "PU Failures"]
+    for col in pu_columns:
+        if col in df_track_styled.columns:
+            # Convert to nullable integer type (Int64) to preserve NaN values
+            df_track_styled[col] = df_track_styled[col].astype('Int64')
 
     actual_row = np.where(~df_track_styled["PU Actual"].isna())[0]
     projection_row = np.where(df_track_styled["PU Actual"].isna())[0]
