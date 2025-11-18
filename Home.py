@@ -1332,6 +1332,13 @@ with st.expander('Introduction',expanded=True):
         image_rl = read_image("images/rl.png")
         st.image(image_rl, use_column_width=True, caption="Reinforcement Learning System")
 
+
+    st.write("Comparison between optimisers")
+    image_comparison = read_image("images/rl_2.png")
+    st.image(image_comparison, use_column_width=True)
+
+
+
 with st.expander('Damage model',expanded=False):
     st_text('The optimiser uses an artificial damage model made solely for demonstration purposes. The data does not represent true PU values.')
     image = read_image("images/Page1_damage.png")
